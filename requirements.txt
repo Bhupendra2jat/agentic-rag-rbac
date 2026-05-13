@@ -1,0 +1,9 @@
+langchain
+langchain-community
+chromadb
+streamlit
+ollama
+fastapi
+uvicorn
+pydantic-settings
+python-dotenv
