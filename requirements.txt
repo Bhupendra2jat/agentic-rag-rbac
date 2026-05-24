@@ -1,9 +1,11 @@
 langchain
 langchain-community
+langchain-core
+langchain-ollama
 chromadb
 streamlit
 ollama
 fastapi
 uvicorn
-pydantic-settings
+pydantic
 python-dotenv
