@@ -1,63 +1,110 @@
 # Agentic RAG with RBAC
 
-This project implements a secure, role-based Retrieval-Augmented Generation (RAG) system. It uses LangChain, ChromaDB, and local LLMs via Ollama to provide intelligent document querying while strictly enforcing access control based on user roles. 
+A secure Retrieval-Augmented Generation (RAG) system built using local LLaMA3, LangChain, ChromaDB, FastAPI, and Streamlit.  
+This project focuses on improving retrieval quality while enforcing secure document access using Role-Based Access Control (RBAC).
 
-The system features both a FastAPI backend and a Streamlit frontend, and includes an "agentic fallback" mechanism: if a user's query cannot be answered using the documents they have access to, the system falls back to the general knowledge of the underlying LLM.
+---
 
-## Project Structure & File Breakdown
+# Overview
 
-*   **`api.py`**: A FastAPI application that exposes a `/ask` endpoint. It accepts a JSON payload containing a `query` and a `role`. It performs similarity search with RBAC filtering and returns the AI-generated answer.
-*   **`app.py`**: A Streamlit interactive web application. It provides a UI to simulate user login (role selection), input queries, and view both the generated response and an audit log of the retrieved documents.
-*   **`ingest.py`**: The data ingestion script. It reads text files from the `data/` directory, assigns role-based metadata according to the folder structure, generates embeddings, and stores them in a local ChromaDB vector store.
-*   **`requirements.txt`**: Lists the Python dependencies required to run the project (e.g., `langchain`, `streamlit`, `fastapi`, `chromadb`).
-*   **`chroma_db/`**: The local directory where the Chroma vector database is persisted.
-*   **`data/`**: Contains the source documents organized by access level:
-    *   `data/junior/`: Documents accessible to all employees (e.g., employee handbook).
-    *   `data/executive/`: Confidential documents accessible only to executives and directors (e.g., financials).
-    *   `data/director/`: Top-secret documents accessible only to directors (e.g., board secrets).
+Traditional RAG systems usually retrieve documents without considering user permissions or retrieval quality optimizations.  
+This project was built to simulate a more production-oriented AI system where:
 
-## Suggested Improvements
+- users can only access documents allowed for their role
+- retrieval quality is improved using query expansion and retrieval tuning
+- the system falls back to general LLM knowledge when no internal documents are found
 
-To make this project production-ready and further improve its architecture, consider the following enhancements:
+The application uses local LLaMA3 through Ollama, making the system fully local and API-independent.
 
-### 1. Authentication & Security
-*   **Real Authentication:** The current system relies on users self-reporting their role via a dropdown or API payload. Integrate a real identity provider (OAuth2, OIDC) or JWT-based authentication to securely verify user identities and extract their roles from claims.
-*   **Secrets Management:** Ensure that sensitive documents in the `data/` folder are not committed to version control in a real-world scenario. Use secure cloud storage (like AWS S3) for document retrieval.
+---
 
-### 2. Architectural Refactoring
-*   **Shared Core Module:** Both `app.py` and `api.py` duplicate the initialization logic for LLMs, Embeddings, and ChromaDB, as well as the RBAC and fallback logic. Extract this into a shared `core.py` or `services/` module to adhere to DRY (Don't Repeat Yourself) principles.
-*   **Asynchronous Support:** The FastAPI endpoints and LangChain calls are currently synchronous. Upgrading to use LangChain's async methods (`ainvoke`) and async FastAPI endpoints (`async def`) will drastically improve concurrency and throughput under load.
+# What is RAG?
 
-### 3. Configuration Management
-*   **Environment Variables:** Hardcoded values like model names (`llama3`), DB paths (`./chroma_db`), and even valid roles should be moved to a `.env` file and managed using `pydantic-settings` or `os.environ`. This allows deploying to different environments without code changes.
+RAG (Retrieval-Augmented Generation) is an AI architecture where:
 
-### 4. Dependency & Environment Management
-*   **Version Pinning:** The `requirements.txt` file currently uses unpinned dependencies. Pinning exact versions (e.g., `fastapi==0.103.1`) or using a modern package manager like `Poetry` or `uv` will ensure reproducible builds and prevent unexpected breaking changes from upstream libraries.
+1. Relevant documents are retrieved from a knowledge base
+2. Retrieved context is sent to an LLM
+3. The LLM generates answers grounded in those documents
 
-### 5. Advanced RAG Features
-*   **Prompt Engineering:** Improve the fallback prompt so the LLM explicitly states when it is relying on general knowledge versus internal documents.
-*   **Chunking Strategy:** `ingest.py` currently loads entire documents as single chunks. Implementing a `RecursiveCharacterTextSplitter` will improve retrieval accuracy for larger documents.
+Instead of relying only on pretrained knowledge, the model answers using real-time retrieved information.
 
-## How to Run
+---
 
-1.  **Install Requirements:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-2.  **Ensure Ollama is running:**
-    Make sure you have Ollama installed and the `llama3` model pulled:
-    ```bash
-    ollama run llama3
-    ```
-3.  **Ingest Data:**
-    ```bash
-    python ingest.py
-    ```
-4.  **Start the API (Optional):**
-    ```bash
-    uvicorn api:app --reload
-    ```
-5.  **Start the Streamlit UI:**
-    ```bash
-    streamlit run app.py
-    ```
+# What is Agentic RAG?
+
+Agentic RAG extends traditional RAG systems by adding decision-making behavior.
+
+In this project:
+- if relevant secure documents exist → answer using RAG
+- if no relevant documents are found → fallback to general LLM reasoning
+
+This creates a more adaptive and reliable AI workflow instead of failing silently.
+
+---
+
+# RBAC (Role-Based Access Control)
+
+The system implements hierarchical RBAC:
+
+- Junior → access to junior documents
+- Executive → access to junior + executive documents
+- Director → access to all documents
+
+Access control is enforced at the retrieval layer using metadata filtering in ChromaDB.
+
+This prevents unauthorized document retrieval before context reaches the LLM.
+
+---
+
+# Features
+
+- Secure multi-document RAG pipeline
+- Hierarchical RBAC enforcement
+- Local LLaMA3 inference using Ollama
+- Query expansion for improved retrieval
+- Retrieval tuning using top-k retrieval
+- Metadata-aware vector search using ChromaDB
+- FastAPI backend APIs
+- Streamlit frontend UI
+- Agentic fallback mechanism
+- Audit logging for retrieved documents
+
+---
+
+# Tech Stack
+
+## AI / LLM
+- LLaMA3
+- Ollama
+- LangChain
+
+## Backend
+- FastAPI
+- REST APIs
+
+## Retrieval
+- ChromaDB
+- Vector embeddings
+- Semantic search
+
+## Frontend
+- Streamlit
+
+## Language
+- Python
+
+---
+
+# Project Structure
+
+```bash
+rag_rbac_system/
+│
+├── app.py              # Streamlit frontend
+├── api.py              # FastAPI backend
+├── ingest.py           # Document ingestion pipeline
+├── chroma_db/          # Persistent vector database
+├── data/
+│   ├── junior/
+│   ├── executive/
+│   └── director/
