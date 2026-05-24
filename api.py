@@ -1,45 +1,66 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI
 from pydantic import BaseModel
-from langchain.prompts import PromptTemplate
-from core import get_llm, get_db, get_allowed_roles
-from config import settings
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.llms import Ollama
+from langchain_core.prompts import PromptTemplate
+from langchain_core.documents import Document
+
+
+def expand_query(query, llm):
+    prompt = f"Expand this search query with 2-3 synonyms/related terms. Return ONLY the expanded query:\nQuery: {query}\nExpanded:"
+    return llm.invoke(prompt)
+
 
 app = FastAPI(title="Secure Agentic RAG API")
 
 class QueryRequest(BaseModel):
     query: str
-    role: str # In a real app, this role would be extracted securely from a JWT token
+    role: str
 
-async def get_current_user_role(request: QueryRequest):
-    """
-    Simulated Authentication Dependency.
-    In a production application, this dependency would decode a JWT token from 
-    the Authorization header and verify the user's role securely.
-    """
-    if request.role not in settings.valid_roles:
-        raise HTTPException(status_code=403, detail=f"Invalid or missing role. Must be one of: {settings.valid_roles}")
-    return request.role
+
+embeddings = OllamaEmbeddings(model="llama3")
+llm = Ollama(model="llama3")
+db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
 
 @app.post("/ask")
-async def ask_question(request: QueryRequest, role: str = Depends(get_current_user_role)):
+def ask_question(request: QueryRequest):
     try:
-        allowed_roles = get_allowed_roles(role)
-        db = get_db()
-        llm = get_llm()
+        valid_roles = ["junior", "executive", "director"]
+        if request.role not in valid_roles:
+            return {"status": "error", "message": f"Invalid role. Use: {valid_roles}"}
 
-        # Asynchronous similarity search for improved throughput
-        results = await db.asimilarity_search(request.query, k=2, filter={"role": {"$in": allowed_roles}})
-        context = "\n".join([doc.page_content for doc in results])
+        role_hierarchy = {
+            "junior": ["junior"],
+            "executive": ["junior", "executive"],
+            "director": ["junior", "executive", "director"]
+        }
+        allowed_roles = role_hierarchy.get(request.role, [])
+
+
+        query = expand_query(request.query, llm)
+
+        collection = db._collection
+        results = collection.query(
+
+            query_embeddings=[embeddings.embed_query(query)],
+            n_results=5,
+            where={"role": {"$in": allowed_roles}},
+            include=["documents", "metadatas"]
+        )
+        docs = [Document(page_content=d, metadata=m) for d, m in zip(results["documents"][0], results["metadatas"][0])]
+        context = "\n".join([doc.page_content for doc in docs])
 
         if not context:
-            # Agentic Fallback with asynchronous invocation
-            response = await llm.ainvoke(request.query)
+            response = llm.invoke(request.query)
             return {"status": "success", "source": "general_knowledge", "answer": response}
         else:
-            # Standard RAG with asynchronous invocation
-            prompt = PromptTemplate(template="Context:\n{context}\nQuestion: {query}\nAnswer:", input_variables=["context", "query"])
-            response = await llm.ainvoke(prompt.format(context=context, query=request.query))
+            prompt = PromptTemplate(
+                template="Context:\n{context}\nQuestion: {query}\nAnswer:",
+                input_variables=["context", "query"]
+            )
+            response = llm.invoke(prompt.format(context=context, query=request.query))
             return {"status": "success", "source": "secure_documents", "answer": response}
-            
+
     except Exception as e:
         return {"status": "error", "message": str(e)}
