@@ -1,59 +1,77 @@
 import streamlit as st
-from langchain.prompts import PromptTemplate
-from core import get_llm, get_db, get_allowed_roles
-from config import settings
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.llms import Ollama
+from langchain_core.prompts import PromptTemplate
+from langchain_core.documents import Document
 
-# 1. Setup Streamlit UI
-st.set_page_config(page_title="Secure RAG", page_icon="🛡️")
-st.title("🛡️ Agentic RAG with RBAC")
-st.write("Production-grade RAG with Role-Based Access Control using local Llama3.")
 
-# 2. Select User Role (Simulating Authentication)
-role = st.selectbox("Select your login role:", settings.valid_roles)
+def expand_query(query, llm):
+    prompt = f"Expand this search query with 2-3 synonyms/related terms. Return ONLY the expanded query:\nQuery: {query}\nExpanded:"
+    return llm.invoke(prompt)
 
-# 3. Initialize Embeddings, LLM, and VectorDB using Core logic
+
+st.set_page_config(
+    page_title="Agentic RAG with RBAC",
+    page_icon=None,
+    layout="centered"
+)
+
+st.title("Agentic RAG with RBAC")
+st.write("Production grade RAG with Role Based Access Control using local Llama3.")
+
+role = st.selectbox("Select your role:", ["junior", "executive", "director"])
+
 @st.cache_resource
 def load_components():
-    return get_llm(), get_db()
+    embeddings = OllamaEmbeddings(model="llama3")
+    llm = Ollama(model="llama3")
+    db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
+    return embeddings, llm, db
 
-llm, db = load_components()
-
-# 4. User Input
-query = st.text_input("Ask a question about the company data:")
+embeddings, llm, db = load_components()
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+query = st.text_input("Ask a question about company data:")
 
 if st.button("Search") and query:
     with st.spinner("Searching securely..."):
-        
-        # 5. RBAC LOGIC: Use centralized allowed roles logic
-        allowed_roles = get_allowed_roles(role)
-        
-        # Fetch documents matching the allowed roles using Chroma's $in operator
-        results = db.similarity_search(
-            query, 
-            k=3, 
-            filter={"role": {"$in": allowed_roles}}
+        role_hierarchy = {
+            "junior": ["junior"],
+            "executive": ["junior", "executive"],
+            "director": ["junior", "executive", "director"]
+        }
+        allowed_roles = role_hierarchy.get(role, [])
+        query = expand_query(query, llm)  
+
+        #hybrid search 
+        collection = db._collection
+        query_embedding = embeddings.embed_query(query)
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=5,
+            where={"role": {"$in": allowed_roles}},
+            include=["documents", "metadatas"]
         )
-        
-        context = "\n".join([doc.page_content for doc in results])
-        
+        docs = [Document(page_content=d, metadata=m) for d, m in zip(results["documents"][0], results["metadatas"][0])]
+        context = "\n".join([doc.page_content for doc in docs])
+
+
+
         if not context:
-            # 6. AGENTIC FALLBACK
-            st.warning("No internal documents found. Falling back to general AI knowledge... 🌐")
-            fallback_response = llm.invoke(query)
-            st.success("Response Generated (General Knowledge)!")
-            st.write(fallback_response)
-        else:
-            # 7. Generate Answer via RAG
-            prompt_template = "Answer the question based ONLY on the following context.\nContext:\n{context}\nQuestion: {query}\nAnswer:"
-            prompt = PromptTemplate(template=prompt_template, input_variables=["context", "query"])
-            final_prompt = prompt.format(context=context, query=query)
-            
-            response = llm.invoke(final_prompt)
-            
-            st.success("Response Generated!")
+            st.warning("No internal docs found. Falling back to general AI knowledge...")
+            response = llm.invoke(query)
+            st.success("Response (General Knowledge)")
             st.write(response)
-            
-            # Audit Log for visibility
-            with st.expander("🔍 View Retrieved Documents (Audit Log)"):
-                for i, doc in enumerate(results):
-                    st.info(f"Doc {i+1} | Classification: [{doc.metadata['role'].upper()}] | {doc.page_content}")
+        else:
+            prompt = PromptTemplate(
+                template="Answer ONLY from this context:\n{context}\nQuestion: {query}\nAnswer:",
+                input_variables=["context", "query"]
+            )
+            response = llm.invoke(prompt.format(context=context, query=query))
+            st.success("Response (Secure Documents)")
+            st.write(response)
+
+            with st.expander("🔍 Retrieved Documents (Audit Log)"):
+                for i, doc in enumerate(docs):
+                    st.info(f"**Doc {i+1}** | Role: `{doc.metadata['role'].upper()}` | Content: {doc.page_content}")
